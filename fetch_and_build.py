@@ -5,7 +5,9 @@ Bulletin — tableau de bord politique français.
 Ce script :
 1. va chercher les dernières actus politique (RSS Le Monde / France Info / Le Figaro)
 2. va chercher les derniers scrutins (votes) à l'Assemblée nationale (API NosDéputés.fr)
-3. génère un site statique (site/index.html) prêt à être publié sur GitHub Pages
+3. décrit les 11 groupes politiques de l'Assemblée nationale (données statiques, curées)
+4. génère un site statique (site/index.html) prêt à être publié sur GitHub Pages,
+   organisé en onglets, pensé pour être compris en un coup d'œil.
 
 Il est pensé pour tourner seul, chaque matin, via une GitHub Action.
 Si une source est indisponible, la section correspondante affiche un message
@@ -13,7 +15,6 @@ plutôt que de faire échouer tout le site.
 """
 
 import html
-import json
 import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -21,7 +22,6 @@ from email.utils import parsedate_to_datetime
 import feedparser
 import requests
 
-PARIS_TZ = timezone.utc  # affiché en UTC + note ; évite une dépendance zoneinfo externe
 USER_AGENT = "Mozilla/5.0 (compatible; BulletinPolitiqueFR/1.0; usage personnel non commercial)"
 
 RSS_SOURCES = [
@@ -33,6 +33,84 @@ RSS_SOURCES = [
 # La numérotation de législature change après chaque élection législative.
 # On essaie la plus récente d'abord, puis on retombe sur la précédente si vide.
 NOSDEPUTES_LEGISLATURES = [17, 16]
+CURRENT_LEGISLATURE = 17
+
+# --------------------------------------------------------------------------
+# Les 11 groupes politiques de l'Assemblée nationale (17e législature).
+# Données curées à la main (chef·fe de groupe, couleur, description simple,
+# effectif approximatif) — l'effectif exact bouge un peu chaque mois, un lien
+# vers Datan est fourni sur chaque carte pour vérifier le chiffre du jour.
+# "position" va de 0 (extrême gauche) à 10 (extrême droite), juste pour placer
+# un repère visuel sur une frise — ce n'est pas une science exacte.
+# --------------------------------------------------------------------------
+PARTIES = [
+    {
+        "sigle": "LFI-NFP", "nom": "La France insoumise",
+        "couleur": "#CC2443", "position": 0.3, "chef": "Mathilde Panot",
+        "resume": "Ils veulent que l'État aide beaucoup plus les gens qui ont peu d'argent, et augmente les impôts des plus riches et des grandes entreprises.",
+        "sieges_approx": 70,
+    },
+    {
+        "sigle": "GDR", "nom": "Gauche Démocrate et Républicaine (communistes)",
+        "couleur": "#B22222", "position": 1.2, "chef": "Stéphane Peu",
+        "resume": "Historiquement liés au Parti communiste, ils défendent les services publics et les ouvriers face aux grandes entreprises.",
+        "sieges_approx": 17,
+    },
+    {
+        "sigle": "EcoS", "nom": "Écologiste et Social",
+        "couleur": "#2E8B57", "position": 2.2, "chef": "Cyrielle Chatelain",
+        "resume": "Leur priorité, c'est protéger la nature et le climat, tout en réduisant les inégalités entre les gens.",
+        "sieges_approx": 38,
+    },
+    {
+        "sigle": "SOC", "nom": "Socialistes et apparentés",
+        "couleur": "#FF8080", "position": 2.8, "chef": "Boris Vallaud",
+        "resume": "Le parti socialiste veut un État qui protège et redistribue, avec plus de justice sociale.",
+        "sieges_approx": 66,
+    },
+    {
+        "sigle": "EPR", "nom": "Ensemble pour la République",
+        "couleur": "#FFD966", "position": 5.0, "chef": "Gabriel Attal",
+        "resume": "Issu du camp du président Emmanuel Macron. Ils veulent réformer sans aller trop à gauche ni trop à droite.",
+        "sieges_approx": 78,
+    },
+    {
+        "sigle": "Dem", "nom": "Les Démocrates (MoDem)",
+        "couleur": "#FFA500", "position": 5.3, "chef": "Marc Fesneau",
+        "resume": "Un parti du centre, allié du gouvernement, qui cherche le compromis entre la gauche et la droite.",
+        "sieges_approx": 35,
+    },
+    {
+        "sigle": "HOR", "nom": "Horizons & Indépendants",
+        "couleur": "#66C2CC", "position": 5.6, "chef": "Paul Christophe",
+        "resume": "Fondé par Édouard Philippe, ce parti du centre soutient aussi le gouvernement actuel.",
+        "sieges_approx": 30,
+    },
+    {
+        "sigle": "LIOT", "nom": "Libertés, Indépendants, Outre-mer et Territoires",
+        "couleur": "#B7A57A", "position": 5.8, "chef": "Laurent Panifous",
+        "resume": "Un groupe d'élus indépendants, souvent issus des territoires d'outre-mer, qui votent au cas par cas.",
+        "sieges_approx": 22,
+    },
+    {
+        "sigle": "DR", "nom": "Droite Républicaine (ex-Les Républicains)",
+        "couleur": "#3366CC", "position": 7.2, "chef": "Laurent Wauquiez",
+        "resume": "Le parti Les Républicains veut moins de dépenses publiques et des règles plus strictes sur la sécurité et l'immigration.",
+        "sieges_approx": 48,
+    },
+    {
+        "sigle": "UDR", "nom": "Union des droites pour la République",
+        "couleur": "#001F5B", "position": 8.6, "chef": "Éric Ciotti",
+        "resume": "Un petit groupe de droite, allié du Rassemblement national, sur une ligne très proche de lui.",
+        "sieges_approx": 16,
+    },
+    {
+        "sigle": "RN", "nom": "Rassemblement National",
+        "couleur": "#0D3B66", "position": 9.6, "chef": "Marine Le Pen",
+        "resume": "Le plus grand groupe de l'Assemblée. Ils veulent moins d'immigration et donner la priorité aux Français dans plusieurs domaines.",
+        "sieges_approx": 120,
+    },
+]
 
 
 def safe_get(url, timeout=15):
@@ -79,9 +157,7 @@ def fetch_news(max_items=12):
                 "summary": summary,
                 "published": published,
             })
-    # Tri par date décroissante (les items sans date passent en dernier)
     items.sort(key=lambda x: x["published"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
-    # Dédoublonnage grossier par titre
     seen = set()
     deduped = []
     for it in items:
@@ -109,7 +185,6 @@ def fetch_scrutins(max_items=8):
         scrutins = data.get("scrutins") or data.get("scrutin") or []
         if not scrutins:
             continue
-        # Les entrées peuvent être {"scrutin": {...}} selon le point d'accès
         normalized = []
         for s in scrutins:
             s = s.get("scrutin", s)
@@ -118,7 +193,7 @@ def fetch_scrutins(max_items=8):
                     "numero": s.get("numero"),
                     "titre": html.unescape(s.get("titre", "") or ""),
                     "date": s.get("date"),
-                    "sort": s.get("sort", ""),
+                    "sort": (s.get("sort", "") or "").strip(),
                     "pour": int(s.get("nombre_pours", 0) or 0),
                     "contre": int(s.get("nombre_contres", 0) or 0),
                     "abstention": int(s.get("nombre_abstentions", 0) or 0),
@@ -136,32 +211,9 @@ def esc(s):
     return html.escape(s or "", quote=True)
 
 
-def hemicycle_svg(pour, contre, abstention):
-    """Petite visualisation en éventail façon hémicycle : chaque vote = un point."""
-    total = max(pour + contre + abstention, 1)
-    dots = (
-        [("#2C4A6E", "pour")] * pour
-        + [("#8B2E3C", "contre")] * contre
-        + [("#9B9686", "abst.")] * abstention
-    )
-    n = len(dots)
-    width, height = 260, 130
-    cx, cy = width / 2, height - 6
-    radius = height - 20
-    svg_dots = []
-    for i, (color, _label) in enumerate(dots):
-        # Répartit les points en éventail, de gauche à droite, sur un demi-cercle
-        t = i / max(n - 1, 1)  # 0..1
-        x = cx + radius * (0.92 * (2 * t - 1))
-        y = cy - radius * (1 - abs(2 * t - 1) ** 1.15) * 0.92
-        svg_dots.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.1" fill="{color}" opacity="0.92"/>')
-    return (
-        f'<svg viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" '
-        f'role="img" aria-label="Répartition du vote : {pour} pour, {contre} contre, {abstention} abstentions">'
-        + "".join(svg_dots)
-        + "</svg>"
-    )
-
+# --------------------------------------------------------------------------
+# Rendu HTML de chaque onglet
+# --------------------------------------------------------------------------
 
 def render_news_section(items):
     if not items:
@@ -182,36 +234,88 @@ def render_news_section(items):
     return f'<ul class="news-list">{"".join(rows)}</ul>'
 
 
+def verdict_badge(sort_txt):
+    """Transforme le texte brut du sort en badge simple (✅ / ❌ / ➖)."""
+    s = (sort_txt or "").lower()
+    if "adopt" in s:
+        return "✅", "Adopté", "adopte"
+    if "rejet" in s or "non adopt" in s:
+        return "❌", "Rejeté", "rejete"
+    return "➖", (sort_txt or "Résultat inconnu"), "autre"
+
+
 def render_scrutins_section(scrutins):
     if not scrutins:
         return '<p class="empty">Votes indisponibles pour le moment — l\'API NosDéputés.fr n\'a pas répondu.</p>'
     cards = []
     for s in scrutins:
-        date_txt = s["date"] or ""
-        sort_txt = esc(s["sort"] or "—")
+        total = max(s["pour"] + s["contre"] + s["abstention"], 1)
+        pour_pct = round(100 * s["pour"] / total)
+        contre_pct = round(100 * s["contre"] / total)
+        abst_pct = max(0, 100 - pour_pct - contre_pct)
+        emoji, verdict_txt, verdict_class = verdict_badge(s["sort"])
         titre = esc(s["titre"]) or "Scrutin sans titre"
         detail_url = f"https://www.assemblee-nationale.fr/dyn/{s['legislature']}/scrutins/{s['numero']}"
+
+        def bar(label, emoji_row, count, pct, css_class):
+            return f'''
+            <div class="vote-row">
+              <span class="vote-row-label">{emoji_row} {label}</span>
+              <div class="vote-row-bar-track">
+                <div class="vote-row-bar-fill {css_class}" style="width:{pct}%"></div>
+              </div>
+              <span class="vote-row-count">{count} <small>({pct}%)</small></span>
+            </div>'''
+
         cards.append(f'''
         <article class="vote-card">
           <div class="vote-card-head">
             <span class="vote-num">Scrutin n°{esc(str(s['numero']))}</span>
-            <span class="vote-date">{esc(date_txt)}</span>
+            <span class="vote-date">{esc(s['date'] or '')}</span>
           </div>
           <h3 class="vote-title">{titre}</h3>
-          <div class="vote-body">
-            {hemicycle_svg(s['pour'], s['contre'], s['abstention'])}
-            <dl class="vote-tally">
-              <div><dt>Résultat</dt><dd class="vote-sort">{sort_txt}</dd></div>
-              <div><dt>Pour</dt><dd>{s['pour']}</dd></div>
-              <div><dt>Contre</dt><dd>{s['contre']}</dd></div>
-              <div><dt>Abst.</dt><dd>{s['abstention']}</dd></div>
-            </dl>
+          <span class="verdict-badge verdict-{verdict_class}">{emoji} {esc(verdict_txt)}</span>
+          <div class="vote-bars">
+            {bar("Pour", "👍", s['pour'], pour_pct, "bar-pour")}
+            {bar("Contre", "👎", s['contre'], contre_pct, "bar-contre")}
+            {bar("Abstention", "🤷", s['abstention'], abst_pct, "bar-abstention")}
           </div>
           <a class="vote-detail-link" href="{esc(detail_url)}" target="_blank" rel="noopener">
-            Voir le détail nominatif par groupe →
+            Voir qui a voté quoi, groupe par groupe →
           </a>
         </article>''')
     return f'<div class="vote-grid">{"".join(cards)}</div>'
+
+
+def render_parties_section():
+    cards = []
+    for p in sorted(PARTIES, key=lambda x: x["position"]):
+        marker_pct = round(p["position"] / 10 * 100)
+        cards.append(f'''
+        <article class="party-card" style="--party-color:{esc(p['couleur'])}">
+          <div class="party-card-top">
+            <span class="party-badge">{esc(p['sigle'])}</span>
+            <span class="party-seats">🪑 ~{p['sieges_approx']} député·es</span>
+          </div>
+          <h3 class="party-name">{esc(p['nom'])}</h3>
+          <p class="party-leader">👤 Chef·fe de groupe : <strong>{esc(p['chef'])}</strong></p>
+          <div class="party-spectrum" aria-hidden="true">
+            <div class="party-spectrum-track"></div>
+            <div class="party-spectrum-marker" style="left:{marker_pct}%"></div>
+          </div>
+          <p class="party-resume">{esc(p['resume'])}</p>
+        </article>''')
+    legend = '''
+    <div class="spectrum-legend">
+      <span>← Plutôt à gauche</span>
+      <span>Plutôt à droite →</span>
+    </div>'''
+    note = '''
+    <p class="empty" style="margin-top:1.2rem">
+      Effectifs approximatifs (ils bougent un peu chaque mois). Pour le chiffre exact du jour,
+      voir <a href="https://datan.fr/groupes" target="_blank" rel="noopener">datan.fr/groupes</a>.
+    </p>'''
+    return legend + f'<div class="party-grid">{"".join(cards)}</div>' + note
 
 
 POLL_TRACKERS = [
@@ -247,7 +351,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <title>Bulletin — suivi politique français</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&family=IBM+Plex+Sans:wght@400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -260,25 +364,27 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </header>
 
-  <nav class="subnav" aria-label="Navigation entre les sections">
-    <a href="#actus" data-target="actus">À la une</a>
-    <a href="#assemblee" data-target="assemblee">Assemblée</a>
-    <a href="#sondages" data-target="sondages">Sondages</a>
+  <nav class="tabbar" aria-label="Sections du bulletin">
+    <button class="tab-btn active" data-tab="actus" type="button"><span class="tab-icon">📰</span> À la une</button>
+    <button class="tab-btn" data-tab="assemblee" type="button"><span class="tab-icon">🏛️</span> Assemblée</button>
+    <button class="tab-btn" data-tab="partis" type="button"><span class="tab-icon">🎭</span> Partis</button>
+    <button class="tab-btn" data-tab="sondages" type="button"><span class="tab-icon">📊</span> Sondages</button>
   </nav>
 
   <main>
-    <section class="section" id="actus">
-      <h2><span class="section-num">01</span> À la une</h2>
+    <section class="panel" id="panel-actus" data-panel="actus">
       {news_html}
     </section>
 
-    <section class="section" id="assemblee">
-      <h2><span class="section-num">02</span> Assemblée nationale — derniers scrutins</h2>
+    <section class="panel" id="panel-assemblee" data-panel="assemblee" hidden>
       {scrutins_html}
     </section>
 
-    <section class="section" id="sondages">
-      <h2><span class="section-num">03</span> Sondages</h2>
+    <section class="panel" id="panel-partis" data-panel="partis" hidden>
+      {parties_html}
+    </section>
+
+    <section class="panel" id="panel-sondages" data-panel="sondages" hidden>
       {polls_html}
     </section>
   </main>
@@ -291,28 +397,25 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   <button class="back-to-top" type="button" aria-label="Retour en haut de page" hidden>↑</button>
 
   <script>
-    // Sous-menu : lien actif selon la section visible + bouton retour en haut
     (function () {{
-      var links = document.querySelectorAll('.subnav a');
-      var sections = Array.from(links).map(function (a) {{
-        return document.getElementById(a.dataset.target);
-      }});
+      var tabs = document.querySelectorAll('.tab-btn');
+      var panels = document.querySelectorAll('.panel');
       var backBtn = document.querySelector('.back-to-top');
 
-      function onScroll() {{
-        var current = sections[0];
-        sections.forEach(function (sec) {{
-          if (sec && sec.getBoundingClientRect().top <= 120) current = sec;
-        }});
-        links.forEach(function (a) {{
-          a.classList.toggle('active', current && a.dataset.target === current.id);
-        }});
-        if (backBtn) backBtn.hidden = window.scrollY < 500;
+      function activate(name) {{
+        tabs.forEach(function (t) {{ t.classList.toggle('active', t.dataset.tab === name); }});
+        panels.forEach(function (p) {{ p.hidden = p.dataset.panel !== name; }});
+        window.scrollTo({{ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' }});
       }}
 
-      window.addEventListener('scroll', onScroll, {{ passive: true }});
-      onScroll();
+      tabs.forEach(function (t) {{
+        t.addEventListener('click', function () {{ activate(t.dataset.tab); }});
+      }});
 
+      function onScroll() {{
+        if (backBtn) backBtn.hidden = window.scrollY < 500;
+      }}
+      window.addEventListener('scroll', onScroll, {{ passive: true }});
       if (backBtn) {{
         backBtn.addEventListener('click', function () {{
           window.scrollTo({{ top: 0, behavior: 'smooth' }});
@@ -333,6 +436,7 @@ def build():
         generated_at=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M"),
         news_html=render_news_section(news),
         scrutins_html=render_scrutins_section(scrutins),
+        parties_html=render_parties_section(),
         polls_html=render_polls_section(),
     )
 
