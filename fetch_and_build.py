@@ -48,67 +48,67 @@ PARTIES = [
         "sigle": "LFI-NFP", "nom": "La France insoumise",
         "couleur": "#CC2443", "position": 0.3, "chef": "Mathilde Panot",
         "resume": "Ils veulent que l'État aide beaucoup plus les gens qui ont peu d'argent, et augmente les impôts des plus riches et des grandes entreprises.",
-        "sieges_approx": 70,
+        "sieges_approx": 70, "aliases": ["LFI-NFP", "LFI-NUPES", "LFI", "FI"],
     },
     {
         "sigle": "GDR", "nom": "Gauche Démocrate et Républicaine (communistes)",
         "couleur": "#B22222", "position": 1.2, "chef": "Stéphane Peu",
         "resume": "Historiquement liés au Parti communiste, ils défendent les services publics et les ouvriers face aux grandes entreprises.",
-        "sieges_approx": 17,
+        "sieges_approx": 17, "aliases": ["GDR", "GDR-NUPES"],
     },
     {
         "sigle": "EcoS", "nom": "Écologiste et Social",
         "couleur": "#2E8B57", "position": 2.2, "chef": "Cyrielle Chatelain",
         "resume": "Leur priorité, c'est protéger la nature et le climat, tout en réduisant les inégalités entre les gens.",
-        "sieges_approx": 38,
+        "sieges_approx": 38, "aliases": ["ECOS", "ECOLO", "ECOLO-NUPES", "ECO"],
     },
     {
         "sigle": "SOC", "nom": "Socialistes et apparentés",
         "couleur": "#FF8080", "position": 2.8, "chef": "Boris Vallaud",
         "resume": "Le parti socialiste veut un État qui protège et redistribue, avec plus de justice sociale.",
-        "sieges_approx": 66,
+        "sieges_approx": 66, "aliases": ["SOC"],
     },
     {
         "sigle": "EPR", "nom": "Ensemble pour la République",
         "couleur": "#FFD966", "position": 5.0, "chef": "Gabriel Attal",
         "resume": "Issu du camp du président Emmanuel Macron. Ils veulent réformer sans aller trop à gauche ni trop à droite.",
-        "sieges_approx": 78,
+        "sieges_approx": 78, "aliases": ["EPR", "REN", "RE"],
     },
     {
         "sigle": "Dem", "nom": "Les Démocrates (MoDem)",
         "couleur": "#FFA500", "position": 5.3, "chef": "Marc Fesneau",
         "resume": "Un parti du centre, allié du gouvernement, qui cherche le compromis entre la gauche et la droite.",
-        "sieges_approx": 35,
+        "sieges_approx": 35, "aliases": ["DEM", "MODEM"],
     },
     {
         "sigle": "HOR", "nom": "Horizons & Indépendants",
         "couleur": "#66C2CC", "position": 5.6, "chef": "Paul Christophe",
         "resume": "Fondé par Édouard Philippe, ce parti du centre soutient aussi le gouvernement actuel.",
-        "sieges_approx": 30,
+        "sieges_approx": 30, "aliases": ["HOR"],
     },
     {
         "sigle": "LIOT", "nom": "Libertés, Indépendants, Outre-mer et Territoires",
         "couleur": "#B7A57A", "position": 5.8, "chef": "Laurent Panifous",
         "resume": "Un groupe d'élus indépendants, souvent issus des territoires d'outre-mer, qui votent au cas par cas.",
-        "sieges_approx": 22,
+        "sieges_approx": 22, "aliases": ["LIOT"],
     },
     {
         "sigle": "DR", "nom": "Droite Républicaine (ex-Les Républicains)",
         "couleur": "#3366CC", "position": 7.2, "chef": "Laurent Wauquiez",
         "resume": "Le parti Les Républicains veut moins de dépenses publiques et des règles plus strictes sur la sécurité et l'immigration.",
-        "sieges_approx": 48,
+        "sieges_approx": 48, "aliases": ["DR", "LR"],
     },
     {
         "sigle": "UDR", "nom": "Union des droites pour la République",
         "couleur": "#001F5B", "position": 8.6, "chef": "Éric Ciotti",
         "resume": "Un petit groupe de droite, allié du Rassemblement national, sur une ligne très proche de lui.",
-        "sieges_approx": 16,
+        "sieges_approx": 16, "aliases": ["UDR", "AD", "A DROITE"],
     },
     {
         "sigle": "RN", "nom": "Rassemblement National",
         "couleur": "#0D3B66", "position": 9.6, "chef": "Marine Le Pen",
         "resume": "Le plus grand groupe de l'Assemblée. Ils veulent moins d'immigration et donner la priorité aux Français dans plusieurs domaines.",
-        "sieges_approx": 120,
+        "sieges_approx": 120, "aliases": ["RN"],
     },
 ]
 
@@ -207,6 +207,52 @@ def fetch_scrutins(max_items=8):
     return []
 
 
+def fetch_live_seat_counts():
+    """Compte, pour chaque groupe politique, le nombre de député·es actuellement
+    en mandat, à partir de la liste complète des député·es de NosDéputés.fr.
+    Renvoie un dict {SIGLE_EN_MAJUSCULES: nombre}, ou {} si la source ne répond
+    pas / a un format inattendu (dans ce cas on retombe sur les chiffres
+    approximatifs figés dans PARTIES)."""
+    url = "https://www.nosdeputes.fr/deputes/enmandat/json"
+    resp = safe_get(url, timeout=25)
+    if resp is None:
+        return {}
+    try:
+        data = resp.json()
+    except Exception as e:
+        print(f"[warn] parsing JSON députés : {e}")
+        return {}
+
+    deputes = data.get("deputes") or data.get("depute") or []
+    counts = {}
+    for d in deputes:
+        d = d.get("depute", d)
+        sigle = (
+            d.get("groupe_sigle")
+            or d.get("groupe_acronyme")
+            or d.get("groupe")
+            or ""
+        )
+        sigle = str(sigle).strip().upper()
+        if not sigle:
+            continue
+        counts[sigle] = counts.get(sigle, 0) + 1
+
+    if not counts:
+        print("[warn] liste des députés récupérée mais aucun champ de groupe reconnu")
+    return counts
+
+
+def resolve_seat_count(party, live_counts):
+    """Cherche le nombre réel de député·es du groupe via ses alias ; à défaut,
+    retombe sur l'estimation figée dans PARTIES."""
+    for alias in party.get("aliases", [party["sigle"]]):
+        n = live_counts.get(alias.upper())
+        if n:
+            return n, True  # (effectif, est_a_jour)
+    return party["sieges_approx"], False
+
+
 def esc(s):
     return html.escape(s or "", quote=True)
 
@@ -287,15 +333,20 @@ def render_scrutins_section(scrutins):
     return f'<div class="vote-grid">{"".join(cards)}</div>'
 
 
-def render_parties_section():
+def render_parties_section(live_counts):
     cards = []
+    any_stale = False
     for p in sorted(PARTIES, key=lambda x: x["position"]):
         marker_pct = round(p["position"] / 10 * 100)
+        seats, is_live = resolve_seat_count(p, live_counts)
+        if not is_live:
+            any_stale = True
+        seats_note = "" if is_live else " (estimation)"
         cards.append(f'''
         <article class="party-card" style="--party-color:{esc(p['couleur'])}">
           <div class="party-card-top">
             <span class="party-badge">{esc(p['sigle'])}</span>
-            <span class="party-seats">🪑 ~{p['sieges_approx']} député·es</span>
+            <span class="party-seats">🪑 {seats} député·es{esc(seats_note)}</span>
           </div>
           <h3 class="party-name">{esc(p['nom'])}</h3>
           <p class="party-leader">👤 Chef·fe de groupe : <strong>{esc(p['chef'])}</strong></p>
@@ -310,11 +361,18 @@ def render_parties_section():
       <span>← Plutôt à gauche</span>
       <span>Plutôt à droite →</span>
     </div>'''
-    note = '''
-    <p class="empty" style="margin-top:1.2rem">
-      Effectifs approximatifs (ils bougent un peu chaque mois). Pour le chiffre exact du jour,
-      voir <a href="https://datan.fr/groupes" target="_blank" rel="noopener">datan.fr/groupes</a>.
-    </p>'''
+    if any_stale:
+        note = '''
+        <p class="empty" style="margin-top:1.2rem">
+          Certains effectifs n'ont pas pu être récupérés en direct aujourd'hui — ils affichent
+          une estimation. Chiffre exact du jour :
+          <a href="https://datan.fr/groupes" target="_blank" rel="noopener">datan.fr/groupes</a>.
+        </p>'''
+    else:
+        note = '''
+        <p class="empty" style="margin-top:1.2rem">
+          Effectifs récupérés en direct ce matin auprès de NosDéputés.fr.
+        </p>'''
     return legend + f'<div class="party-grid">{"".join(cards)}</div>' + note
 
 
@@ -431,19 +489,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 def build():
     news = fetch_news()
     scrutins = fetch_scrutins()
+    live_counts = fetch_live_seat_counts()
 
     html_out = HTML_TEMPLATE.format(
         generated_at=datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M"),
         news_html=render_news_section(news),
         scrutins_html=render_scrutins_section(scrutins),
-        parties_html=render_parties_section(),
+        parties_html=render_parties_section(live_counts),
         polls_html=render_polls_section(),
     )
 
     with open("site/index.html", "w", encoding="utf-8") as f:
         f.write(html_out)
 
-    print(f"[ok] {len(news)} actus, {len(scrutins)} scrutins récupérés. site/index.html écrit.")
+    print(f"[ok] {len(news)} actus, {len(scrutins)} scrutins, "
+          f"{len(live_counts)} groupes en direct. site/index.html écrit.")
 
 
 if __name__ == "__main__":
