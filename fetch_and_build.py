@@ -60,6 +60,10 @@ def fetch_news(max_items=12):
         for entry in feed.entries[:8]:
             title = html.unescape(getattr(entry, "title", "").strip())
             link = getattr(entry, "link", "")
+            summary_raw = getattr(entry, "summary", "") or getattr(entry, "description", "")
+            summary = html.unescape(re.sub(r"<[^>]+>", "", summary_raw)).strip()
+            if len(summary) > 180:
+                summary = summary[:177].rsplit(" ", 1)[0] + "…"
             published = None
             if getattr(entry, "published", None):
                 try:
@@ -72,6 +76,7 @@ def fetch_news(max_items=12):
                 "source": source_name,
                 "title": title,
                 "link": link,
+                "summary": summary,
                 "published": published,
             })
     # Tri par date décroissante (les items sans date passent en dernier)
@@ -166,10 +171,13 @@ def render_news_section(items):
         date_txt = ""
         if it["published"]:
             date_txt = it["published"].astimezone(timezone.utc).strftime("%d/%m à %Hh%M")
+        summary_html = f'<p class="news-summary">{esc(it["summary"])}</p>' if it.get("summary") else ""
         rows.append(f'''
         <li class="news-item">
-          <a href="{esc(it['link'])}" target="_blank" rel="noopener">{esc(it['title'])}</a>
+          <a class="news-title" href="{esc(it['link'])}" target="_blank" rel="noopener">{esc(it['title'])}</a>
           <span class="news-meta">{esc(it['source'])}{' · ' + date_txt if date_txt else ''}</span>
+          {summary_html}
+          <a class="news-readmore" href="{esc(it['link'])}" target="_blank" rel="noopener">Lire l'article complet →</a>
         </li>''')
     return f'<ul class="news-list">{"".join(rows)}</ul>'
 
@@ -182,6 +190,7 @@ def render_scrutins_section(scrutins):
         date_txt = s["date"] or ""
         sort_txt = esc(s["sort"] or "—")
         titre = esc(s["titre"]) or "Scrutin sans titre"
+        detail_url = f"https://www.assemblee-nationale.fr/dyn/{s['legislature']}/scrutins/{s['numero']}"
         cards.append(f'''
         <article class="vote-card">
           <div class="vote-card-head">
@@ -198,6 +207,9 @@ def render_scrutins_section(scrutins):
               <div><dt>Abst.</dt><dd>{s['abstention']}</dd></div>
             </dl>
           </div>
+          <a class="vote-detail-link" href="{esc(detail_url)}" target="_blank" rel="noopener">
+            Voir le détail nominatif par groupe →
+          </a>
         </article>''')
     return f'<div class="vote-grid">{"".join(cards)}</div>'
 
@@ -248,18 +260,24 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     </div>
   </header>
 
+  <nav class="subnav" aria-label="Navigation entre les sections">
+    <a href="#actus" data-target="actus">À la une</a>
+    <a href="#assemblee" data-target="assemblee">Assemblée</a>
+    <a href="#sondages" data-target="sondages">Sondages</a>
+  </nav>
+
   <main>
-    <section class="section">
+    <section class="section" id="actus">
       <h2><span class="section-num">01</span> À la une</h2>
       {news_html}
     </section>
 
-    <section class="section">
+    <section class="section" id="assemblee">
       <h2><span class="section-num">02</span> Assemblée nationale — derniers scrutins</h2>
       {scrutins_html}
     </section>
 
-    <section class="section">
+    <section class="section" id="sondages">
       <h2><span class="section-num">03</span> Sondages</h2>
       {polls_html}
     </section>
@@ -269,6 +287,39 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <p>Sources : Le Monde, France Info, Le Figaro (flux RSS) · NosDéputés.fr — Regards Citoyens (Licence ouverte / Open Licence)
     pour les données de vote de l'Assemblée nationale · Générée automatiquement, sans intervention manuelle.</p>
   </footer>
+
+  <button class="back-to-top" type="button" aria-label="Retour en haut de page" hidden>↑</button>
+
+  <script>
+    // Sous-menu : lien actif selon la section visible + bouton retour en haut
+    (function () {{
+      var links = document.querySelectorAll('.subnav a');
+      var sections = Array.from(links).map(function (a) {{
+        return document.getElementById(a.dataset.target);
+      }});
+      var backBtn = document.querySelector('.back-to-top');
+
+      function onScroll() {{
+        var current = sections[0];
+        sections.forEach(function (sec) {{
+          if (sec && sec.getBoundingClientRect().top <= 120) current = sec;
+        }});
+        links.forEach(function (a) {{
+          a.classList.toggle('active', current && a.dataset.target === current.id);
+        }});
+        if (backBtn) backBtn.hidden = window.scrollY < 500;
+      }}
+
+      window.addEventListener('scroll', onScroll, {{ passive: true }});
+      onScroll();
+
+      if (backBtn) {{
+        backBtn.addEventListener('click', function () {{
+          window.scrollTo({{ top: 0, behavior: 'smooth' }});
+        }});
+      }}
+    }})();
+  </script>
 </body>
 </html>
 """
