@@ -1,0 +1,49 @@
+name: Mise à jour quotidienne du bulletin
+
+on:
+  schedule:
+    # 06:00 UTC = 8h00 à Paris en hiver (CET) / 7h00 en été (CEST — heure d'été mars-oct)
+    # GitHub Actions cron ne gère pas les fuseaux horaires : à ~1h près selon la saison.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}   # bouton "Run workflow" pour tester manuellement
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Générer le site (fetch actus + votes Assemblée)
+        run: python fetch_and_build.py
+
+      - name: Préparer GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Empaqueter le dossier site/
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Déployer sur GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
